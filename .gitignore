@@ -1,0 +1,12 @@
+# 本地凭证目录：绝不允许进仓库
+.local/
+*.local.json
+credentials*.env
+
+# 依赖
+node_modules/
+
+# 系统
+.DS_Store
+Thumbs.db
+*.log

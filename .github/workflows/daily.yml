@@ -1,0 +1,83 @@
+name: WorkBuddy daily
+
+on:
+  # 每天 01:00 UTC（= 北京时间 09:00）跑一次。
+  # 说明：GitHub 的 cron 用 UTC，且高峰期可能有几分钟延迟，属正常。
+  schedule:
+    - cron: "0 1 * * *"
+  # 支持手动触发；勾选 dry_run 只读不写，用来验证凭证是否有效。
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "只读模式（不签到、不派猫，仅校验凭证与状态）"
+        type: boolean
+        default: false
+
+# 同一时间只跑一个，避免两次运行抢同一天的额度
+concurrency:
+  group: workbuddy-daily
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  daily:
+    name: 签到 + 派猫
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: 拉取代码
+        uses: actions/checkout@v4
+
+      - name: 准备 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: 确认运行时（动态取路径，不写死版本号）
+        run: |
+          NODE_BIN="$(command -v node)"
+          NPM_BIN="$(command -v npm)"
+          echo "node = $NODE_BIN ($("$NODE_BIN" -v))"
+          echo "npm  = $NPM_BIN ($("$NPM_BIN" -v))"
+          {
+            echo "NODE_BIN=$NODE_BIN"
+            echo "NPM_BIN=$NPM_BIN"
+          } >> "$GITHUB_ENV"
+
+      - name: 安装依赖
+        run: |
+          if [ -f package-lock.json ]; then
+            "$NPM_BIN" ci --no-audit --no-fund
+          else
+            "$NPM_BIN" install --no-audit --no-fund
+          fi
+
+      - name: 执行每日任务
+        env:
+          # —— 必需 ——（在仓库 Settings → Secrets and variables → Actions 里配置）
+          WB_REFRESH_TOKEN: ${{ secrets.WB_REFRESH_TOKEN }}
+          WB_USER_ID: ${{ secrets.WB_USER_ID }}
+          # —— 可选 ——
+          WB_ACCESS_TOKEN: ${{ secrets.WB_ACCESS_TOKEN }}
+          WB_ENDPOINT: ${{ secrets.WB_ENDPOINT }}
+          # 配置后，轮换出来的 refreshToken 会自动回写 secret（细粒度 PAT，权限只需 Secrets: Read and write）
+          GH_SECRETS_PAT: ${{ secrets.GH_SECRETS_PAT }}
+        run: |
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            "$NODE_BIN" scripts/run.mjs --dry-run
+          else
+            "$NODE_BIN" scripts/run.mjs
+          fi
+
+      # 签到失败时给个醒目的收尾提示；猫猫失败不会走到这里（退出码只看签到）
+      - name: 结果
+        if: always()
+        run: |
+          if [ "${{ job.status }}" = "success" ]; then
+            echo "✅ 签到完成"
+          else
+            echo "❌ 任务失败：请检查上面的日志，或到仓库 Secrets 重新导出凭证"
+          fi

@@ -1,0 +1,11 @@
+# 统一按 LF 入库，避免 Windows 上开发、Linux runner 上执行时出现 CRLF 问题
+* text=auto eol=lf
+
+# Windows 批处理必须 CRLF
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# 二进制
+*.png binary
+*.jpg binary
+*.webp binary
