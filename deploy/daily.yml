@@ -1,0 +1,111 @@
+# ============================================================
+# WorkBuddy 每日任务 —— 签到 + 派猫猫旅行
+#
+# 这个文件要放在仓库里的路径是：
+#     .github/workflows/daily.yml
+#
+# 每天 UTC 01:00（北京时间 09:00）自动跑一次，也可以在网页上手动点着跑。
+# ============================================================
+name: WorkBuddy 每日签到
+
+on:
+  # 每天 01:23 UTC = 北京时间 09:23。
+  # 为什么不是整点：GitHub 的调度器在每小时 :00 最拥挤，任务可能被延迟十几分钟，
+  # 极端情况下还会被直接丢弃。挪到 :23 能明显降低这个风险。
+  schedule:
+    - cron: "23 1 * * *"
+
+  # 手动触发。第一次配置完，用这个立刻验证一遍，不用等到第二天。
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "只读模式：不签到、不派猫，只检查登录凭证是否有效"
+        type: boolean
+        default: false
+
+# 同一时间只跑一个，避免两次运行抢同一天的额度
+concurrency:
+  group: workbuddy-daily
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  daily:
+    name: 签到 + 派猫
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    env:
+      # 是否配置了「自动回写」用的令牌（可选，不配也能一直跑）
+      HAS_PAT: ${{ secrets.GH_SECRETS_PAT != '' }}
+
+    steps:
+      - name: 拉取代码
+        uses: actions/checkout@v4
+
+      - name: 准备 Node 运行环境
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: 确认运行时（动态取路径，不写死版本号）
+        run: |
+          NODE_BIN="$(command -v node)"
+          echo "NODE_BIN=$NODE_BIN" >> "$GITHUB_ENV"
+          echo "node = $NODE_BIN ($("$NODE_BIN" -v))"
+
+      # 登录凭证每次刷新都会变，新值存在缓存里，下一次直接接着用 —— 这样就不用管它了。
+      # 这一步即使失败也不影响主流程（下面还有 Secret 里的初始值兜底）。
+      - name: 恢复上次轮换的登录态
+        continue-on-error: true
+        uses: actions/cache/restore@v4
+        with:
+          path: .wb-state
+          key: wb-state-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            wb-state-
+
+      - name: 安装可选依赖（仅在配置了自动回写时才需要）
+        if: env.HAS_PAT == 'true'
+        run: |
+          NPM_BIN="$(command -v npm)"
+          echo "npm = $NPM_BIN ($("$NPM_BIN" -v))"
+          "$NPM_BIN" install --no-save --no-audit --no-fund libsodium-wrappers
+
+      - name: 执行每日任务
+        env:
+          # 必填：在本机双击「export-credential.cmd」产出，填到仓库的 Secret 里
+          WB_REFRESH_TOKEN: ${{ secrets.WB_REFRESH_TOKEN }}
+          # 以下都是可选项，不填也能跑
+          WB_ACCESS_TOKEN: ${{ secrets.WB_ACCESS_TOKEN }}
+          WB_ENDPOINT: ${{ secrets.WB_ENDPOINT }}
+          # 填了就把轮换出来的新凭证自动写回 Secret（细粒度 PAT，权限只需 Secrets: Read and write）
+          GH_SECRETS_PAT: ${{ secrets.GH_SECRETS_PAT }}
+          WB_STATE_DIR: ${{ github.workspace }}/.wb-state
+        run: |
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            "$NODE_BIN" wb-daily.mjs --dry-run
+          else
+            "$NODE_BIN" wb-daily.mjs
+          fi
+
+      # 把本次轮换出来的新凭证存回缓存，供明天的运行使用
+      - name: 保存本次轮换的登录态
+        if: always()
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: .wb-state
+          key: wb-state-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: 结果
+        if: always()
+        run: |
+          if [ "${{ job.status }}" = "success" ]; then
+            echo "签到完成。可以在上面「执行每日任务」那一步的日志里看到明细。"
+          else
+            echo "任务失败：请查看上面「执行每日任务」的日志。"
+            echo "如果提示登录凭证失效，请在本机重新双击「export-credential.cmd」并更新仓库 Secret。"
+          fi

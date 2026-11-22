@@ -13,6 +13,7 @@
     "export-credential": "bash scripts/export-credential.sh"
   },
   "dependencies": {
-    "libsodium-wrappers": "^0.7.15"
+    "libsodium-wrappers": "^0.7.16",
+    "tweetnacl": "^1.0.3"
   }
 }
