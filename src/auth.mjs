@@ -69,7 +69,7 @@ export async function persistRefreshToken(ctx, newRefreshToken) {
   if (!pat) return { saved: false, reason: '未配置 GH_SECRETS_PAT，跳过回写' };
   if (!repo) return { saved: false, reason: '不在 GitHub Actions 环境中，跳过回写' };
 
-  const sodium = (await import('libsodium-wrappers')).default;
+  const sodium = (await import('node:module')).createRequire(import.meta.url)('libsodium-wrappers');
   await sodium.ready;
 
   const keyRes = await fetch(`https://api.github.com/repos/${repo}/actions/secrets/public-key`, {
